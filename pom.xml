@@ -65,8 +65,8 @@
 	</build>
 
 	<scm>
-		<connection>scm:git:git://github.com/fbe/Scubywars-sample-client.git</connection>
-		<developerConnection>scm:git:git@github.com:fbe/Scubywars-sample-client.git</developerConnection>
-		<url>https://github.com/fbe/Scubywars-sample-client</url>
+		<connection>scm:git:git://github.com/jucknath/Killer-client.git</connection>
+		<developerConnection>scm:git:git@github.com:jucknath/Killer-client.git</developerConnection>
+		<url>https://github.com/jucknath/Killer-client</url>
 	</scm>
 </project>
