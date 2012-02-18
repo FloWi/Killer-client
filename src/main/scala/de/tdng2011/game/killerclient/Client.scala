@@ -18,8 +18,6 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 	var lastCanShoot=true
 	var lastNextPublicId:Long=0
 	var lastSelfPos=Vec2(0,0)
-	var blackList:Long=0
-	var isSucker=true
 
 	def norm(v:Vec2)={ 
 		val l=v.length.floatValue 
@@ -60,8 +58,6 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 	def getNext(self:Player)(a:Player,b:Player) = 
 		if (a==self) b else 
 		if (b==self) a else 
-		if (a.publicId==blackList) b else 
-		if (b.publicId==blackList) a else 
 		if (dist(self,a) < dist(self,b)) a else b
 
 	def getNextShot(self:Player)(a:Shot,b:Shot) = 
@@ -93,33 +89,11 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 			shotRadius=shotOpt.get.radius
 		}
 
-		if (lastCanShoot && !canShoot && isSucker) blackList=lastNextPublicId
-
 		val self      =selfOpt.get
 		val selfDir   =radiantToVec2(self.direction)
 		
 		val otherShot = findNextShot(world,self)
 
-		val afraid= if (otherShot.isEmpty) false else {
-			val (otherShotPos,selfPos) = fixTurnAround(otherShot.get.pos,self.pos)
-
-			val selfDelta=selfDir*self.speed
-			val otherShotDelta=radiantToVec2(otherShot.get.direction)*otherShot.get.speed
-
-			val gamma=calcGamma(selfPos, selfDelta ,otherShotPos, otherShotDelta)
-
-			val collisionPoint=otherShotPos+otherShotDelta*gamma
-			val selfCollisionPosition=selfPos+selfDelta*gamma
-
-			(collisionPoint-selfCollisionPosition).length < (self.radius+otherShot.get.radius) *2 && otherShot.get.lifeTime>gamma
-		}
-
-		/*
-		val next = if (afraid) 
-			world.players.find(_.publicId==otherShot.parentId).get
-		else
-			findNextPlayer(world,self)
-		*/
 		val next = findNextPlayer(world,self)
 
 		val nowPos    =next.pos
@@ -153,9 +127,7 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 
 		val isNear    =dist<self.radius*minDistFactor
 
-		val ahead	  = !isNear && !afraid
-
-		isSucker      = abs(asin(selfDir.cross(targetDir))) < 3.1415927 * 0.8
+		val ahead	  = !isNear 
 
 		lastNextPublicId=next.publicId
 		lastNextPos=next.pos
