@@ -6,7 +6,67 @@ import de.tdng2011.game.library.connection.{RelationTypes, AbstractClient}
 import de.tdng2011.game.library.{ScoreBoard, World, EntityTypes,Player,Shot}
 import scala.math.{asin,atan,abs,acos}
 
+/*
+object Shot {
+  val defaultRadius   = 5.shortValue
+  val defaultSpeed    = (Player.defaultSpeed * 4).shortValue // m/s
+  val defaultLifeTime = World.size/defaultSpeed.asInstanceOf[Float]*0.5f
+}
+
+object Player {
+  val defaultDirection        = 2.0f
+  val defaultRadius           = 15.shortValue
+  val defaultSpeed            = 100.shortValue // m/s
+  val defaultRotSpeed : Float = 2*Pi.floatValue //rad/s
+}
+*/
+
 class Client(hostname : String,myName:String) extends AbstractClient(hostname, RelationTypes.Player) {
+	
+	/*
+	case class Mat2(var v11:Double,var v12:Double,var v21:Double,var v22:Double) {
+		def setToAngle(val angle:Double)
+		def setToId()
+		def scale(val s:Double)
+		def mul(val v:Vec2):Vec2
+	}
+	*/
+
+	case class SimEnt(
+		var pos:Vec2, 
+		var publicId:Long, 
+		var speed:Double, 
+		var radius:Double, 
+		var direction:Double, 
+		var turnLeft:Boolean,
+		var turnRight:Boolean,
+		var thrust:Boolean
+		) {
+
+		def copyFromPlayer(p:Player) {
+			pos      =p.pos
+			publicId =p.publicId
+			speed    =p.speed
+			radius   =p.radius
+			direction=p.direction
+			turnLeft =p.turnLeft
+			turnRight=p.turnRight
+			thrust   =p.thrust
+		}
+
+		def copyFromShot(p:Shot) {
+			pos      =p.pos
+			publicId =p.publicId
+			speed    =p.speed
+			radius   =p.radius
+			direction=p.direction
+			turnLeft =false
+			turnRight=false
+			thrust   =true
+		}
+	}
+		
+
 	val worldSize=1000
 	val minDistFactor=5
 
@@ -117,17 +177,17 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 		val alphaSin  =abs(asin(cross))
 		val alphaCos  =abs(acos(skalar(selfDir,delta)))
 
-		val beta		  =atan((next.radius /* +shotRadius */ )/dist)
+		val beta      =atan((next.radius /* +shotRadius */ )/dist)
 		val aim       =alphaSin<beta && alphaCos>0
 
 		val shoot     =aim && canShoot 
 
-		val left		  =cross<0 && !shoot
+		val left      =cross<0 && !shoot
 		val right     =cross>0 && !shoot
 
 		val isNear    =dist<self.radius*minDistFactor
 
-		val ahead	  = !isNear 
+		val ahead     = !isNear 
 
 		lastNextPublicId=next.publicId
 		lastNextPos=next.pos
