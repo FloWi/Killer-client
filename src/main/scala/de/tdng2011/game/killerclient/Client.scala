@@ -6,46 +6,30 @@ import de.tdng2011.game.library.connection.{RelationTypes, AbstractClient}
 import de.tdng2011.game.library.{ScoreBoard, World, EntityTypes,Player,Shot}
 import scala.math.{asin,atan,abs,acos}
 
-/*
-object Shot {
-  val defaultRadius   = 5.shortValue
-  val defaultSpeed    = (Player.defaultSpeed * 4).shortValue // m/s
-  val defaultLifeTime = worldSize/defaultSpeed.asInstanceOf[Float]*0.5f
-}
-
-object Player {
-  val defaultDirection        = 2.0f
-  val defaultRadius           = 15.shortValue
-  val defaultSpeed            = 100.shortValue // m/s
-  val defaultRotSpeed : Float = 2*Pi.floatValue //rad/s
-}
-*/
-
 class Client(hostname : String,myName:String) extends AbstractClient(hostname, RelationTypes.Player) {
 
 	val worldSize=1000
+	val shotRadius=5
+	val shotSpeed=400
 	val Pi=3.1415927
+	val magicShotId= -666
 
 	val framesPerSecond = 40.0
 	val frameDuration = 1.0/framesPerSecond
-	
+
+	val lookAheadTime=2
+
+	val simTime    =1.0
+	val simShotTime=0.8
+
 	case class VVV(v:Vec2) extends Vec2(v.x, v.y) {
-	  private def fix(a:Float) = ((a%worldSize)+worldSize)%worldSize
-	  private def fix2(a:Float) = if (a < - worldSize /2 ) a+worldSize else if (a > worldSize /2 ) a-worldSize else a
+		private def fix(a:Float) = ((a%worldSize)+worldSize)%worldSize
+		private def fix2(a:Float) = if (a < - worldSize /2 ) a+worldSize else if (a > worldSize /2 ) a-worldSize else a
 
-	  def norm = Vec2(fix(x), fix(y))
-	  def normDelta = Vec2(fix2(x), fix2(y))
-	  def dist(v:Vec2) : Float = VVV(this - v).normDelta.length.floatValue
+		def norm = Vec2(fix(x), fix(y))
+		def normDelta = Vec2(fix2(x), fix2(y))
+		def dist(v:Vec2) : Float = VVV(this - v).normDelta.length.floatValue
 	}
-
-	/*
-	case class Mat2(var v11:Double,var v12:Double,var v21:Double,var v22:Double) {
-		def setToAngle(val angle:Double)
-		def setToId()
-		def scale(val s:Double)
-		def mul(val v:Vec2):Vec2
-	}
-	*/
 
 	case class SimEnt(
 		var pos:Vec2, 
@@ -57,6 +41,8 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 		var turnLeft:Boolean,
 		var turnRight:Boolean,
 		var thrust:Boolean) {
+
+		var alive=true
 
 		def step(time:Double) {
 			if (turnLeft) direction -= (time * rotSpeed).floatValue
@@ -70,7 +56,7 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 		}
 
 		def collidesWith(ent:SimEnt):Boolean={
-			if (ent.publicId==publicId)
+			if (ent.publicId==publicId || !ent.alive || !alive)
 				false
 			else {
 				val (p1,p2) = fixTurnAround(ent.pos,pos)
@@ -80,13 +66,18 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 				
 	}
 		
-	class SimWorld(w:World,var b:Behavior) {
+	class SimWorld(w:World,var b:Behavior,me:Player) {
 		var ents:IndexedSeq[SimEnt]=IndexedSeq()
 
 		//ctor:
 		val count=w.shots.length+w.players.length
 		w.players.foreach(p=>ents = ents :+ SimEnt(p.pos,p.publicId,p.speed,p.radius,p.direction,p.rotSpeed,p.turnLeft,p.turnRight,p.thrust))
 		w.shots.foreach  (s=>ents = ents :+ SimEnt(s.pos,s.publicId,s.speed,s.radius,s.direction,0,false,false,true))
+
+		if (b.shot) {
+			val shotPos = me.pos + Vec2(1, 0).rotate(me.direction)* (me.radius + shotRadius)
+			ents = ents :+ SimEnt(shotPos,magicShotId, shotSpeed,shotRadius, me.direction,0,false,false,true)
+		}
 
 		def step(time:Double) { ents.foreach(e=>e.step(time)) }
 
@@ -98,10 +89,17 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 				ents.map(x=>x.collidesWith(me.get)).reduceLeft(_|_)
 		}
 
-		def simulate(time:Double,id:Long):Behavior={
+		def checkShotCollisions(id:Long) : Boolean = {
+			val shot=ents.find(_.publicId==id)
+			var ret=false
+			if (!shot.isEmpty) ents.foreach(x=> if (x.collidesWith(shot.get)) { shot.get.alive=false; x.alive=false; ret=true } )
+			ret
+		}
+
+		def simulate(time:Double,playerId:Long,shotId:Long):Behavior={
 			var t:Double=0
 			var amIDead=false
-			val me=ents.find(_.publicId==id)
+			val me=ents.find(_.publicId==playerId)
 			if (me.isEmpty) {
 				b.setSurvivalTime(0)	
 			}
@@ -110,7 +108,10 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 
 				while (t<time && !amIDead) {
 					step(frameDuration)
-					amIDead=checkCollisions(id)
+					amIDead=checkCollisions(playerId)
+					val old=b.shotHasHit
+					b.shotHasHit|=checkShotCollisions(shotId)
+					if (b.shotHasHit && !old) b.shotHasHitTime=t
 					if (!amIDead) t=t+frameDuration
 				}
 				b.setSurvivalTime(t)
@@ -119,7 +120,11 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 
 	}
 
-	case class Behavior(val turnLeft:Boolean,val turnRight:Boolean, val thrust:Boolean,var survivalTime:Double) {
+	case class Behavior(val turnLeft:Boolean,val turnRight:Boolean, val thrust:Boolean, val shot:Boolean) {
+		var shotHasHit=false
+		var survivalTime=0.0
+		var shotHasHitTime=8888.0
+
 		def applyTo(p:SimEnt):Behavior = {
 			p.turnLeft=turnLeft
 			p.turnRight=turnRight
@@ -132,12 +137,10 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 		}
 	}
 
-	val minDistFactor=5
+	val minDistFactor=7
 
 	override def name = myName
 
-	var shotSpeed=10
-	var shotRadius=1
 	var lastNextPos=Vec2(0,0)
 	var lastCanShoot=true
 	var lastNextPublicId:Long=0
@@ -200,36 +203,23 @@ class Client(hostname : String,myName:String) extends AbstractClient(hostname, R
 		( o.y*sd.x - s.y*sd.x + s.x*sd.y - o.x*sd.y) / 
 		( od.x*sd.y - od.y*sd.x)
 
+	var maxD:Long=0
+	var lastFrame:Long=0
 
 	def processWorld(world : World) {
+val frame=System.currentTimeMillis()
+print("("+(frame-lastFrame)+")")
+lastFrame=frame
+val time=System.currentTimeMillis()
 		val selfOpt=world.players.find(_.publicId==getPublicId)
 		if (selfOpt.isEmpty) return
 		val self      =selfOpt.get
 
 		val shotOpt = world.shots.find(_.parentId==getPublicId)
 		val canShoot = shotOpt.isEmpty
+		val shotId   = if (shotOpt.isEmpty) -1 else shotOpt.get.publicId
 
-		val lookAheadTime=2
-
-		val l:List[Behavior]=List(
-		  new SimWorld(world,Behavior(false,false,false,0)).simulate(lookAheadTime,self.publicId) ,
-		  new SimWorld(world,Behavior(true ,false,false,0)).simulate(lookAheadTime,self.publicId) ,
-		  new SimWorld(world,Behavior(false,true ,false,0)).simulate(lookAheadTime,self.publicId) ,
-
-		  new SimWorld(world,Behavior(false,false,true ,0)).simulate(lookAheadTime,self.publicId) ,
-		  new SimWorld(world,Behavior(true ,false,true ,0)).simulate(lookAheadTime,self.publicId) ,
-		  new SimWorld(world,Behavior(false,true ,true ,0)).simulate(lookAheadTime,self.publicId) )
-
-		val bestBehavior=l.reduceLeft( (a:Behavior,b:Behavior) => if (a.survivalTime>b.survivalTime) a else b)
-
-println(" turnLeft="+bestBehavior.turnLeft+" turnRight="+bestBehavior.turnRight+" thrust="+bestBehavior.thrust+" survivalTime="+bestBehavior.survivalTime)
-		val afraid= bestBehavior.survivalTime<2
-
-		if (!canShoot) {
-			shotSpeed=shotOpt.get.speed
-			shotRadius=shotOpt.get.radius
-		}
-
+		// ---------------------------- traditional code ------------------------
 		val selfDir   =radiantToVec2(self.direction)
 		
 		val otherShot = findNextShot(world,self)
@@ -260,10 +250,8 @@ println(" turnLeft="+bestBehavior.turnLeft+" turnRight="+bestBehavior.turnRight+
 		val beta      =atan((next.radius /* +shotRadius */ )/dist)
 		val aim       =alphaSin<beta && alphaCos>0
 
-		val shoot     =aim && canShoot 
-
-		val left      =cross<0 && !shoot
-		val right     =cross>0 && !shoot
+		val left      =cross<0 
+		val right     =cross>0 
 
 		val isNear    =dist<self.radius*minDistFactor
 
@@ -273,10 +261,110 @@ println(" turnLeft="+bestBehavior.turnLeft+" turnRight="+bestBehavior.turnRight+
 		lastNextPos=next.pos
 		lastCanShoot=canShoot
 		lastSelfPos=self.pos
+var debug=""
+		// --------------------------- no shot -------------------------------
+		val l:List[Behavior]=List(
+		  new SimWorld(world,Behavior(false,false,false,false),self).simulate(simTime,self.publicId,shotId) ,
+		  new SimWorld(world,Behavior(true ,false,false,false),self).simulate(simTime,self.publicId,shotId) ,
+		  new SimWorld(world,Behavior(false,true ,false,false),self).simulate(simTime,self.publicId,shotId) ,
 
-		if (afraid) 
-			action(bestBehavior.turnLeft,bestBehavior.turnRight,bestBehavior.thrust,shoot)
-		else 
-			action(left,right,ahead,shoot)
+		  new SimWorld(world,Behavior(false,false,true ,false),self).simulate(simTime,self.publicId,shotId) ,
+		  new SimWorld(world,Behavior(true ,false,true ,false),self).simulate(simTime,self.publicId,shotId) ,
+		  new SimWorld(world,Behavior(false,true ,true ,false),self).simulate(simTime,self.publicId,shotId) )
+
+		val bestNoShot =l.reduceLeft( (a:Behavior,b:Behavior) => {
+				if (a.survivalTime>b.survivalTime) 
+					a
+				else if (b.survivalTime>a.survivalTime)
+					b
+				else {
+					var takeA=0
+					if (a.turnLeft  && left)  takeA=takeA+1
+					if (a.turnRight && right) takeA=takeA+1
+					if (a.thrust    && ahead) takeA=takeA+1
+
+					if (b.turnLeft  && left)  takeA=takeA-1
+					if (b.turnRight && right) takeA=takeA-1
+					if (b.thrust    && ahead) takeA=takeA-1
+
+					if (takeA>0)
+						a
+					else
+						b
+				}
+			})
+		val worstNoShot=l.reduceLeft( (a:Behavior,b:Behavior) => if (a.survivalTime<b.survivalTime) a else b)
+
+		var best=bestNoShot
+		var letsPlayChess= worstNoShot.survivalTime<simTime && bestNoShot.survivalTime>simTime
+
+if (letsPlayChess) debug=debug+"X "+worstNoShot.survivalTime+"  "
+		// ---------------------------    shot -------------------------------
+		
+		if (canShoot) {
+			val lns:List[Behavior]=List(
+			  new SimWorld(world,Behavior(false,false,false,true),self).simulate(simShotTime,self.publicId,magicShotId) ,
+			  new SimWorld(world,Behavior(true ,false,false,true),self).simulate(simShotTime,self.publicId,magicShotId) ,
+			  new SimWorld(world,Behavior(false,true ,false,true),self).simulate(simShotTime,self.publicId,magicShotId) ,
+
+			  new SimWorld(world,Behavior(false,false,true ,true),self).simulate(simShotTime,self.publicId,magicShotId) ,
+			  new SimWorld(world,Behavior(true ,false,true ,true),self).simulate(simShotTime,self.publicId,magicShotId) ,
+			  new SimWorld(world,Behavior(false,true ,true ,true),self).simulate(simShotTime,self.publicId,magicShotId) )
+
+			val bestShot=lns.reduceLeft( (a:Behavior,b:Behavior) => {
+				if (a.shotHasHit && !b.shotHasHit) 
+					a
+				else if (b.shotHasHit && !a.shotHasHit)
+					b
+				else if (a.survivalTime>b.survivalTime) 
+					a
+				else if (b.survivalTime>a.survivalTime)
+					b
+				else {
+					var takeA=0
+					if (a.turnLeft  && left)  takeA=takeA+1
+					if (a.turnRight && right) takeA=takeA+1
+					if (a.thrust    && ahead) takeA=takeA+1
+
+					if (b.turnLeft  && left)  takeA=takeA-1
+					if (b.turnRight && right) takeA=takeA-1
+					if (b.thrust    && ahead) takeA=takeA-1
+
+					if (takeA>0)
+						a
+					else
+						b
+				}
+			})
+
+			if (bestShot.survivalTime>bestNoShot.survivalTime) {
+				best=bestShot
+				letsPlayChess=true
+if (letsPlayChess) debug=debug+"* "
+			}
+
+			if (bestShot.shotHasHit /* ************************ && bestShot.survivalTime >= bestNoShot.survivalTime*/) {
+				best=bestShot
+				letsPlayChess=true
+if (letsPlayChess) debug=debug+"! "
+			}
+		}
+
+
+// println(debug)
+
+
+		if (letsPlayChess) {
+			action(best.turnLeft && !best.shot,best.turnRight && !best.shot,best.thrust,best.shot)
+if (best.shot && canShoot) print("*") else print(".")
+		}
+		else {
+			action(left,right,ahead,false)
+print(" ")
+		}
+
+val d=System.currentTimeMillis()-time
+if (d>maxD) maxD=d
+println(maxD+" "+d)
 	}
 }
